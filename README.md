@@ -6,6 +6,8 @@ Real-time options analysis dashboard powered by Polygon.io. Displays OHLCV chart
 
 Deployed on Vercel: `gamma-app` (Hobby tier)
 
+**Repository**: [github.com/Kartracer94/GEX-Latest](https://github.com/Kartracer94/GEX-Latest)
+
 ## Features
 
 - **OHLCV Candlestick Charts** — Multiple timeframes (1D, 5D, 1M, 3M, 6M, 1Y) with configurable candle intervals
@@ -86,33 +88,36 @@ Set this in Vercel under Project Settings → Environment Variables for producti
 
 ## Deployment
 
-### Vercel CLI
+This project auto-deploys to Vercel on every push to `main` via the GitHub integration.
+
+### Quick Deploy (push to GitHub)
 
 ```bash
-# Install Vercel CLI (if needed)
-npm i -g vercel
+git add -A && git commit -m "your message" && git push origin main
+```
 
-# Link to existing project (first time only)
-vercel link
+Vercel will automatically build and deploy within ~30 seconds.
 
-# Deploy to production
-vercel --prod
+### First-Time Setup
+
+```bash
+git clone https://github.com/Kartracer94/GEX-Latest.git
+cd GEX-Latest
+npm install
 ```
 
 ### Updating Source Files
 
-To update just the `src/` files:
-
 ```bash
-# From the project root
+# Copy updated files into the correct directories
 cp ~/path/to/updated/App.jsx src/App.jsx
 cp ~/path/to/updated/api.js src/api.js
 cp ~/path/to/updated/engine.js src/engine.js
 cp ~/path/to/updated/styles.css src/styles.css
 cp ~/path/to/updated/constants.js src/constants.js
 
-# Redeploy
-vercel --prod
+# Push to deploy
+git add -A && git commit -m "Update src files" && git push origin main
 ```
 
 ## Key Modules
