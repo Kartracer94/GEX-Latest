@@ -248,6 +248,12 @@ export default function App() {
   const [htfResults, setHtfResults] = useState(null);
   const [htfLoading, setHtfLoading] = useState(false);
 
+  // Ref to break circular dependency: loadOptions needs gammaResults but must not depend on it
+  const gammaResultsRef = useRef(null);
+
+  // Keep ref in sync so loadOptions can read latest gammaResults without depending on it
+  useEffect(() => { gammaResultsRef.current = gammaResults; }, [gammaResults]);
+
   // Map each candle timeframe to its higher-timeframe counterpart for multi-TF confirmation
   const HTF_MAP = {
     '5min':   { multiplier: 1, timespan: 'hour', label: 'Hourly' },
@@ -340,7 +346,7 @@ export default function App() {
         setOiChangeData(Object.keys(changeMap).length > 0 ? changeMap : null);
 
         // NEW: Compute GEX from options data
-        const currentPrice = gammaResults?.[gammaResults.length - 1]?.c;
+        const currentPrice = gammaResultsRef.current?.[gammaResultsRef.current.length - 1]?.c;
         if (currentPrice) {
           const gex = computeGEX(results, currentPrice);
           setGexData(gex);
@@ -356,7 +362,7 @@ export default function App() {
       setGexData(null);
     }
     setOptionsLoading(false);
-  }, [ticker, gammaResults]);
+  }, [ticker]);
 
   useEffect(() => {
     loadBars();
