@@ -179,7 +179,7 @@ h1 { font-size: 16px; font-weight: 700; letter-spacing: 1px; white-space: nowrap
 /* Signal Grid */
 .signal-grid {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 1fr;
   gap: 1px;
   background: rgba(255,255,255,0.03);
 }
@@ -323,8 +323,6 @@ h1 { font-size: 16px; font-weight: 700; letter-spacing: 1px; white-space: nowrap
 /* ─── Responsive ─── */
 @media (max-width: 900px) {
   .signal-grid { grid-template-columns: 1fr; }
-  .gauge-row { flex-wrap: wrap; }
-  .gauge-cell { min-width: 120px; }
   header { padding: 10px 16px; gap: 10px; }
   .indicator-panel { padding: 16px; }
   .strikes-row {

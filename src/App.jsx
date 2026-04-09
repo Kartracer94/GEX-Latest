@@ -58,58 +58,6 @@ function TradingViewChart({ symbol, interval }) {
   return <div ref={containerRef} style={{ height: '100%', width: '100%' }} />;
 }
 
-// ── Gauge Components ──
-function GammaGauge({ value, label, min = 0, max = 1, colorScheme = 'default' }) {
-  const pct = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  const angle = -90 + pct * 180;
-
-  let color;
-  if (colorScheme === 'gex') {
-    // Red (negative/short gamma) → Yellow (neutral) → Green (positive/long gamma)
-    color = pct < 0.4 ? '#ff4466' : pct < 0.6 ? '#ffaa00' : '#00ff88';
-  } else if (colorScheme === 'pressure') {
-    color = pct < 0.35 ? '#ff4466' : pct > 0.65 ? '#00ff88' : '#ffaa00';
-  } else {
-    color = pct < 0.3 ? '#00ff88' : pct < 0.7 ? '#ffaa00' : '#ff4466';
-  }
-
-  const id = `gauge-${label.replace(/\s/g, '')}`;
-
-  return (
-    <div className="gauge">
-      <svg width={100} height={60} style={{ display: 'block' }}>
-        <defs>
-          <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <polygon points={`0,${60} ${50} ${60},${100},${60}`} fill={`url(#${id})`} />
-        <polyline points={50} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-      </svg>
-      <div className="gauge-label">{label}</div>
-      <div className="gauge-value" style={{ color }}>
-        {typeof value === 'number' ? value.toFixed(2) : value}
-      </div>
-    </div>
-  );
-}
-
-function SparkLine({ data, width = 600, height = 28, color = '#00aaff' }) {
-  if (!data || data.length < 2) return null;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`)
-    .join(' ');
-  return (
-    <svg width={width} height={height} style={{ display: 'block', opacity: 0.6 }}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 // ── GEX Weekly Panel Component ──
 function GEXPanel({ gexData }) {
   if (!gexData) return null;
@@ -391,11 +339,6 @@ export default function App() {
     setTicker(tickerInput.toUpperCase().trim());
   };
 
-  const latest = gammaResults?.[gammaResults.length - 1];
-  const pressureHistory = gammaResults
-    ? gammaResults.slice(-60).map((r) => r.combinedPressure)
-    : [];
-
   return (
     <div className="app">
       <header>
@@ -455,43 +398,7 @@ export default function App() {
       <div className="indicator-panel">
         {error && <div className="error-bar">⚠ {error}</div>}
 
-        {/* Gauges — UPDATED: replaced IV Percentile and Vol Ratio with GEX metrics */}
-        {latest && (
-          <div className="gauge-row">
-            <div className="gauge-cell">
-              <GammaGauge value={latest.gammaConcentration} label="Gamma Proxy" />
-            </div>
-            <div className="gauge-cell">
-              <GammaGauge
-                value={gexData ? gexData.normalizedGEX : 0}
-                label="Net GEX"
-                min={-1}
-                max={1}
-                colorScheme="gex"
-              />
-            </div>
-            <div className="gauge-cell">
-              <GammaGauge
-                value={latest.combinedPressure}
-                label="Bid/Ask Pressure"
-                min={-1}
-                max={1}
-                colorScheme="pressure"
-              />
-            </div>
-            <div className="gauge-cell">
-              <GammaGauge
-                value={gexData ? (latest.c - gexData.zeroGammaLevel) / latest.c : 0}
-                label="γ Flip Dist"
-                min={-0.05}
-                max={0.05}
-                colorScheme="gex"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Signal + Strikes */}
+        {/* Stacked layout: Signal → Options Flow → GEX → Strikes → Glossary */}
         {signal && (
           <div className="signal-grid">
             {/* Signal Card */}
@@ -639,7 +546,6 @@ export default function App() {
                     </div>
                   )}
 
-                  <GEXPanel gexData={gexData} />
                 </div>
               )}
 
@@ -657,6 +563,13 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* GEX Panel — standalone card */}
+            {gexData && (
+              <div className="signal-card">
+                <GEXPanel gexData={gexData} />
+              </div>
+            )}
 
             {/* Strikes Card */}
             <div className="signal-card">
@@ -801,31 +714,16 @@ export default function App() {
                     <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>GEX (Gamma Exposure)</div>
                     Net gamma exposure across all contracts. Positive GEX means dealers are long gamma — they buy dips and sell rips, stabilizing price. Negative GEX means dealers are short gamma — they must chase the move in both directions, amplifying volatility.
                   </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Gamma</div>
+                    The rate of change of an option's delta per $1 move in the underlying stock. High gamma at a strike means small price moves cause large shifts in dealer hedging — creating a "magnet" effect that pulls price toward that strike or, if dealers are short gamma, accelerates moves away from it.
+                  </div>
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* Pressure Sparkline Footer */}
-        {pressureHistory.length > 0 && (
-          <div className="pressure-footer">
-            <div className="pressure-label">BID/ASK PRESSURE</div>
-            <SparkLine data={pressureHistory} width={600} height={28} color="#00aaff" />
-            <div
-              className="pressure-value"
-              style={{
-                color: latest.combinedPressure > 0.1
-                  ? '#00ff88'
-                  : latest.combinedPressure < -0.1
-                  ? '#ff4466'
-                  : '#aab',
-              }}
-            >
-              {latest.combinedPressure.toFixed(3)}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
