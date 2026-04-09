@@ -228,39 +228,100 @@ export function analyzeOptionsChain(optionsData, currentPrice, realizedVol, oiCh
     }
   }
 
+  // ── P/C Volume Ratio (leading indicator — today's volume becomes tomorrow's OI) ──
+  const totalCallVolume = calls.reduce((s, c) => s + (c.day?.volume || 0), 0);
+  const totalPutVolume = puts.reduce((s, c) => s + (c.day?.volume || 0), 0);
+  const pcVolumeRatio = totalCallVolume > 0 ? totalPutVolume / totalCallVolume : 1;
+
+  // ── IV Skew (OTM put IV vs OTM call IV) ──
+  // Compare ~5% OTM puts vs ~5% OTM calls
+  const otmPuts = puts.filter((o) => {
+    const strike = o.details?.strike_price;
+    return strike && strike >= currentPrice * 0.92 && strike <= currentPrice * 0.97;
+  });
+  const otmCalls = calls.filter((o) => {
+    const strike = o.details?.strike_price;
+    return strike && strike >= currentPrice * 1.03 && strike <= currentPrice * 1.08;
+  });
+
+  let putWingIV = 0;
+  let callWingIV = 0;
+  let ivSkew = 0;       // positive = puts more expensive (fear)
+  let ivSkewRatio = 1;
+
+  const otmPutIVs = otmPuts.map((o) => o.implied_volatility).filter((v) => v > 0);
+  const otmCallIVs = otmCalls.map((o) => o.implied_volatility).filter((v) => v > 0);
+  if (otmPutIVs.length > 0) {
+    putWingIV = otmPutIVs.reduce((a, b) => a + b, 0) / otmPutIVs.length;
+  }
+  if (otmCallIVs.length > 0) {
+    callWingIV = otmCallIVs.reduce((a, b) => a + b, 0) / otmCallIVs.length;
+  }
+  if (putWingIV > 0 && callWingIV > 0) {
+    ivSkew = putWingIV - callWingIV;
+    ivSkewRatio = putWingIV / callWingIV;
+  }
+
+  // ── Volume/OI Ratio near the money (high = new positioning, low = stale) ──
+  let nearMoneyVolOI = 0;
+  let callVolOI = 0;
+  let putVolOI = 0;
+  const nearCallsForVolOI = calls.filter((c) => {
+    const strike = c.details?.strike_price;
+    return strike && strike >= currentPrice * 0.95 && strike <= currentPrice * 1.10;
+  });
+  const nearPutsForVolOI = puts.filter((c) => {
+    const strike = c.details?.strike_price;
+    return strike && strike >= currentPrice * 0.90 && strike <= currentPrice * 1.05;
+  });
+
+  const callVol = nearCallsForVolOI.reduce((s, c) => s + (c.day?.volume || 0), 0);
+  const callOI = nearCallsForVolOI.reduce((s, c) => s + (c.open_interest || 0), 0);
+  const putVol = nearPutsForVolOI.reduce((s, c) => s + (c.day?.volume || 0), 0);
+  const putOI = nearPutsForVolOI.reduce((s, c) => s + (c.open_interest || 0), 0);
+  callVolOI = callOI > 0 ? callVol / callOI : 0;
+  putVolOI = putOI > 0 ? putVol / putOI : 0;
+  nearMoneyVolOI = (callOI + putOI) > 0 ? (callVol + putVol) / (callOI + putOI) : 0;
+
+  // ── Vanna Exposure (dealer delta sensitivity to IV changes) ──
+  // Approximation: vanna peaks near ATM, proportional to delta*(1-|delta|)
+  // Positive net vanna + dropping IV → dealers buy stock (bullish)
+  // Negative net vanna + dropping IV → dealers sell stock (bearish)
+  let vannaExposure = 0;
+  for (const o of optionsData) {
+    const delta = o.greeks?.delta;
+    const oi = o.open_interest || 0;
+    if (delta == null || oi === 0) continue;
+    const absDelta = Math.abs(delta);
+    const approxVanna = absDelta * (1 - absDelta); // peaks at |delta|=0.5
+    const isCall = o.details?.contract_type === 'call';
+    // Dealer is short options (customer buys) → sign reflects dealer hedge direction
+    const sign = isCall ? 1 : -1;
+    vannaExposure += sign * approxVanna * oi * 100;
+  }
+  // Normalize against total OI for cross-ticker comparability
+  const totalOI = totalCallOI + totalPutOI;
+  const normalizedVanna = totalOI > 0 ? vannaExposure / (totalOI * 100) : 0;
+
   // ── OI Change Trend (near the money) ──
-  // Rising call OI near the money = bullish squeeze building
-  // Rising put OI near the money = bearish pressure building
   let callOiChanging = 0;
   let putOiChanging = 0;
-  let netOiSignal = 0; // positive = bullish, negative = bearish
+  let netOiSignal = 0;
 
   if (oiChangeMap && Object.keys(oiChangeMap).length > 0) {
-    // FIXED: oiChangeMap now contains actual change values directly
-    const nearCalls = calls.filter((c) => {
-      const strike = c.details?.strike_price;
-      return strike && strike >= currentPrice * 0.95 && strike <= currentPrice * 1.10;
-    });
-    const nearPuts = puts.filter((c) => {
-      const strike = c.details?.strike_price;
-      return strike && strike >= currentPrice * 0.90 && strike <= currentPrice * 1.05;
-    });
-
-    for (const c of nearCalls) {
+    for (const c of nearCallsForVolOI) {
       const ticker = c.details?.ticker;
       if (ticker && oiChangeMap[ticker] != null) {
         callOiChanging += oiChangeMap[ticker];
       }
     }
-    for (const p of nearPuts) {
+    for (const p of nearPutsForVolOI) {
       const ticker = p.details?.ticker;
       if (ticker && oiChangeMap[ticker] != null) {
         putOiChanging += oiChangeMap[ticker];
       }
     }
 
-    // Net signal: positive call OI growth minus positive put OI growth
-    // Normalized against total OI so it scales across different stocks
     const totalNearOI = totalCallOI + totalPutOI;
     if (totalNearOI > 0) {
       netOiSignal = (callOiChanging - putOiChanging) / Math.max(totalNearOI * 0.01, 1);
@@ -278,6 +339,19 @@ export function analyzeOptionsChain(optionsData, currentPrice, realizedVol, oiCh
     putOiChanging,
     netOiSignal,
     hasOiChangeData: oiChangeMap && Object.keys(oiChangeMap).length > 0,
+    // New metrics
+    pcVolumeRatio,
+    totalCallVolume,
+    totalPutVolume,
+    ivSkew,
+    ivSkewRatio,
+    putWingIV,
+    callWingIV,
+    nearMoneyVolOI,
+    callVolOI,
+    putVolOI,
+    vannaExposure,
+    normalizedVanna,
   };
 }
 
@@ -481,6 +555,70 @@ export function computeGEX(optionsData, spotPrice) {
 
 
 /**
+ * Compute Max Pain — the strike price where total option buyer losses are maximized
+ * (i.e., the most options expire worthless). Price tends to gravitate here into expiration.
+ *
+ * @param {Array} optionsData - Raw options chain from Polygon
+ * @param {string} [targetExpiration] - If provided, only consider this expiration date
+ * @returns {{ maxPainStrike, painByStrike, totalOIAtMaxPain }} or null
+ */
+export function computeMaxPain(optionsData, targetExpiration = null) {
+  if (!optionsData || optionsData.length === 0) return null;
+
+  let contracts = optionsData.filter((o) => (o.open_interest || 0) > 0);
+  if (targetExpiration) {
+    contracts = contracts.filter((o) => o.details?.expiration_date === targetExpiration);
+  }
+  if (contracts.length === 0) return null;
+
+  // Collect all unique strikes
+  const strikes = [...new Set(contracts.map((o) => o.details?.strike_price).filter(Boolean))].sort((a, b) => a - b);
+
+  const calls = contracts.filter((o) => o.details?.contract_type === 'call');
+  const puts = contracts.filter((o) => o.details?.contract_type === 'put');
+
+  let minPain = Infinity;
+  let maxPainStrike = strikes[0];
+  const painByStrike = [];
+
+  for (const settlementPrice of strikes) {
+    let totalPain = 0;
+
+    // Call buyer pain: if settlement > strike, call is ITM → buyer has value
+    for (const c of calls) {
+      const strike = c.details.strike_price;
+      const oi = c.open_interest || 0;
+      if (settlementPrice > strike) {
+        totalPain += (settlementPrice - strike) * oi * 100;
+      }
+    }
+
+    // Put buyer pain: if settlement < strike, put is ITM → buyer has value
+    for (const p of puts) {
+      const strike = p.details.strike_price;
+      const oi = p.open_interest || 0;
+      if (settlementPrice < strike) {
+        totalPain += (strike - settlementPrice) * oi * 100;
+      }
+    }
+
+    painByStrike.push({ strike: settlementPrice, pain: totalPain });
+
+    if (totalPain < minPain) {
+      minPain = totalPain;
+      maxPainStrike = settlementPrice;
+    }
+  }
+
+  const maxPainOI = contracts
+    .filter((o) => o.details?.strike_price === maxPainStrike)
+    .reduce((s, o) => s + (o.open_interest || 0), 0);
+
+  return { maxPainStrike, painByStrike, totalOIAtMaxPain: maxPainOI };
+}
+
+
+/**
  * Run multi-timeframe confirmation.
  * Takes the current (primary) timeframe's gammaResults,
  * plus an optional higher-timeframe gammaResults array.
@@ -574,177 +712,230 @@ export function generateSignal(gammaResults, optionsData, oiChangeMap = null, ht
   // ── Multi-timeframe check ──
   const mtf = multiTimeframeCheck(gammaResults, htfResults);
 
-  // ══════════════════════════════════════════
+  // ── Max Pain ──
+  const maxPainData = computeMaxPain(optionsData);
+
+  // ══════════════════════════════════════════════════════════════
   //  BULLISH SCORING
-  // ══════════════════════════════════════════
+  //  Price action: ~40 | Volume: ~20 | Options flow: ~50
+  //  GEX/gamma: ~40  | Multi-TF: ~15
+  // ══════════════════════════════════════════════════════════════
   let bullScore = 0;
   let bullReasons = [];
 
-  // --- Existing signals ---
+  // --- Price Action (~40 max) ---
   if (latest.gammaConcentration > 0.75) {
-    bullScore += 20;
+    bullScore += 10;
     bullReasons.push('High gamma concentration (>0.75)');
   }
   if (gammaRising) {
-    bullScore += 15;
+    bullScore += 8;
     bullReasons.push('Gamma expanding over 3 periods');
   }
   if (latest.combinedPressure > 0.2) {
-    bullScore += 15;
+    bullScore += 10;
     bullReasons.push('Ask-side pressure dominant (buying)');
   }
-  if (latest.isHighVolume) {
-    bullScore += 10;
-    bullReasons.push('Volume above 1.5× average');
-  }
   if (priceRising) {
-    bullScore += 20;
+    bullScore += 12;
     bullReasons.push('Price trending upward');
   }
-  if (latest.ivPercentile > 0.7) {
-    bullScore += 10;
-    bullReasons.push('IV elevated — options actively traded');
-  }
 
-  // --- Volume Acceleration ---
-  if (latest.volAccelRising && latest.isHighVolume) {
+  // --- Volume (~20 max) ---
+  if (latest.isHighVolume) {
     bullScore += 10;
+    bullReasons.push('Volume above 1.5x average');
+  }
+  if (latest.volAccelRising && latest.isHighVolume) {
+    bullScore += 8;
     bullReasons.push(`Volume accelerating over 4 bars (${(latest.volAcceleration * 100).toFixed(0)}% rising)`);
   }
 
-  // --- ATR Breakout Move ---
+  // --- ATR Breakout ---
   if (latest.isLargeATRMove && latest.combinedPressure > 0) {
-    bullScore += 12;
-    bullReasons.push(`Large bullish move (${latest.atrRatio.toFixed(1)}× ATR)`);
+    bullScore += 10;
+    bullReasons.push(`Large bullish move (${latest.atrRatio.toFixed(1)}x ATR)`);
   }
 
-  // --- Options Chain — OI Change Trend ---
+  // --- Options Flow (~50 max) ---
   if (optionsAnalysis) {
+    // OI change trend
     if (optionsAnalysis.hasOiChangeData && optionsAnalysis.netOiSignal > 1) {
       bullScore += 12;
       bullReasons.push(`Call OI building near money (+${optionsAnalysis.callOiChanging.toLocaleString()} net call OI change)`);
     }
+    // P/C OI ratio
     if (optionsAnalysis.pcRatio < 0.7) {
+      bullScore += 6;
+      bullReasons.push(`Low P/C OI ratio (${optionsAnalysis.pcRatio.toFixed(2)}) — call-heavy positioning`);
+    }
+    // P/C Volume ratio (leading indicator)
+    if (optionsAnalysis.pcVolumeRatio < 0.6) {
       bullScore += 8;
-      bullReasons.push(`Low P/C ratio (${optionsAnalysis.pcRatio.toFixed(2)}) — call-heavy positioning`);
+      bullReasons.push(`Low P/C volume ratio (${optionsAnalysis.pcVolumeRatio.toFixed(2)}) — aggressive call buying today`);
     }
-  }
-
-  // --- Options Chain — IV vs Realized Vol Spread ---
-  if (optionsAnalysis && optionsAnalysis.avgATMIV > 0) {
-    if (optionsAnalysis.ivSpreadRatio > 1.3) {
+    // IV Skew — flattening/inverting skew = bullish (less fear premium)
+    if (optionsAnalysis.ivSkewRatio > 0 && optionsAnalysis.ivSkewRatio < 1.05) {
+      bullScore += 12;
+      bullReasons.push(`Flat/inverted IV skew (${optionsAnalysis.ivSkewRatio.toFixed(2)}x) — low fear premium, call demand elevated`);
+    }
+    // Volume/OI ratio — high call vol/OI = fresh bullish positioning
+    if (optionsAnalysis.callVolOI > 0.5) {
       bullScore += 10;
-      bullReasons.push(`IV/RV spread elevated (${optionsAnalysis.ivSpreadRatio.toFixed(1)}×) — market pricing a move`);
+      bullReasons.push(`High call Vol/OI near money (${optionsAnalysis.callVolOI.toFixed(2)}) — new bullish positions opening`);
+    }
+    // IV/RV spread
+    if (optionsAnalysis.ivSpreadRatio > 1.3) {
+      bullScore += 8;
+      bullReasons.push(`IV/RV spread elevated (${optionsAnalysis.ivSpreadRatio.toFixed(1)}x) — market pricing a move`);
+    }
+    // Vanna — positive vanna + elevated IV = bullish if IV drops (vol crush rally)
+    if (optionsAnalysis.normalizedVanna > 0.15 && optionsAnalysis.avgATMIV > 0) {
+      bullScore += 10;
+      bullReasons.push(`Positive vanna exposure (${optionsAnalysis.normalizedVanna.toFixed(2)}) — IV drop would force dealer buying`);
     }
   }
 
-  // --- Multi-Timeframe Confirmation ---
+  // --- Multi-Timeframe Confirmation (~15 max) ---
   if (mtf.htfAvailable && mtf.aligned && mtf.htfDirection === 'BULLISH') {
     bullScore += 15;
     bullReasons.push('Higher timeframe confirms bullish (trend + pressure aligned)');
   }
 
-  // --- NEW: GEX Integration ---
+  // --- GEX / Gamma Structure (~40 max) ---
   if (gexData) {
-    // Negative GEX = dealers short gamma = squeeze potential (amplifies moves)
     if (gexData.normalizedGEX < -0.3 && priceRising) {
       bullScore += 15;
       bullReasons.push(`Dealers short gamma (GEX: ${formatGEX(gexData.netGEX)}) — squeeze amplification likely`);
     }
-    // Price above zero-gamma level = bullish gamma territory
     if (latest.c > gexData.zeroGammaLevel) {
-      bullScore += 8;
+      bullScore += 10;
       bullReasons.push(`Price above zero-gamma level ($${gexData.zeroGammaLevel.toFixed(0)}) — positive gamma territory`);
     }
-    // This week's GEX heavily negative = imminent squeeze risk
     if (gexData.byExpiration.thisWeek.netGEX < 0 && gexData.byExpiration.thisWeek.contracts > 5) {
       bullScore += 10;
       bullReasons.push(`This week expiry GEX negative (${formatGEX(gexData.byExpiration.thisWeek.netGEX)}) — near-term squeeze setup`);
     }
   }
 
-  // ══════════════════════════════════════════
+  // --- Max Pain ---
+  if (maxPainData) {
+    const distToMaxPain = (latest.c - maxPainData.maxPainStrike) / latest.c;
+    // Price below max pain = gravitational pull upward (bullish into expiry)
+    if (distToMaxPain < -0.02) {
+      bullScore += 10;
+      bullReasons.push(`Price below max pain ($${maxPainData.maxPainStrike.toFixed(0)}) — upward pull into expiration`);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   //  BEARISH SCORING
-  // ══════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
   let bearScore = 0;
   let bearReasons = [];
 
-  // --- Existing signals ---
+  // --- Price Action (~40 max) ---
   if (latest.gammaConcentration < 0.25) {
-    bearScore += 20;
+    bearScore += 10;
     bearReasons.push('Low gamma concentration (<0.25)');
   }
   if (gammaFalling) {
-    bearScore += 15;
+    bearScore += 8;
     bearReasons.push('Gamma contracting over 3 periods');
   }
   if (latest.combinedPressure < -0.2) {
-    bearScore += 15;
+    bearScore += 10;
     bearReasons.push('Bid-side pressure dominant (selling)');
   }
   if (priceFalling) {
-    bearScore += 20;
+    bearScore += 12;
     bearReasons.push('Price trending downward');
   }
+
+  // --- Volume (~20 max) ---
   if (latest.isHighVolume && priceFalling) {
     bearScore += 10;
     bearReasons.push('High volume on decline');
   }
-
-  // --- Volume Acceleration ---
   if (latest.volAccelRising && latest.isHighVolume && priceFalling) {
-    bearScore += 10;
+    bearScore += 8;
     bearReasons.push(`Volume accelerating on decline (${(latest.volAcceleration * 100).toFixed(0)}% rising)`);
   }
 
-  // --- ATR Breakout Move ---
+  // --- ATR Breakout ---
   if (latest.isLargeATRMove && latest.combinedPressure < 0) {
-    bearScore += 12;
-    bearReasons.push(`Large bearish move (${latest.atrRatio.toFixed(1)}× ATR)`);
+    bearScore += 10;
+    bearReasons.push(`Large bearish move (${latest.atrRatio.toFixed(1)}x ATR)`);
   }
 
-  // --- Options Chain — OI Change Trend ---
+  // --- Options Flow (~50 max) ---
   if (optionsAnalysis) {
+    // OI change trend
     if (optionsAnalysis.hasOiChangeData && optionsAnalysis.netOiSignal < -1) {
       bearScore += 12;
-      bearReasons.push(`Put OI building near money (+${optionsAnalysis.putOiChanging.toLocaleString()} net put OI change)`);
+      bearReasons.push(`Put OI building near money (+${Math.abs(optionsAnalysis.putOiChanging).toLocaleString()} net put OI change)`);
     }
+    // P/C OI ratio
     if (optionsAnalysis.pcRatio > 1.2) {
+      bearScore += 6;
+      bearReasons.push(`High P/C OI ratio (${optionsAnalysis.pcRatio.toFixed(2)}) — put-heavy positioning`);
+    }
+    // P/C Volume ratio (leading indicator)
+    if (optionsAnalysis.pcVolumeRatio > 1.5) {
       bearScore += 8;
-      bearReasons.push(`High P/C ratio (${optionsAnalysis.pcRatio.toFixed(2)}) — put-heavy positioning`);
+      bearReasons.push(`High P/C volume ratio (${optionsAnalysis.pcVolumeRatio.toFixed(2)}) — aggressive put buying today`);
     }
-  }
-
-  // --- Options Chain — IV vs Realized Vol Spread ---
-  if (optionsAnalysis && optionsAnalysis.avgATMIV > 0) {
-    if (optionsAnalysis.ivSpreadRatio > 1.3 && priceFalling) {
+    // IV Skew — steepening skew = bearish (institutions buying downside protection)
+    if (optionsAnalysis.ivSkewRatio > 1.15) {
+      bearScore += 12;
+      bearReasons.push(`Steep IV skew (${optionsAnalysis.ivSkewRatio.toFixed(2)}x) — heavy demand for downside protection`);
+    }
+    // Volume/OI ratio — high put vol/OI = fresh bearish positioning
+    if (optionsAnalysis.putVolOI > 0.5) {
       bearScore += 10;
-      bearReasons.push(`IV/RV spread elevated on decline (${optionsAnalysis.ivSpreadRatio.toFixed(1)}×) — downside priced in`);
+      bearReasons.push(`High put Vol/OI near money (${optionsAnalysis.putVolOI.toFixed(2)}) — new bearish positions opening`);
+    }
+    // IV/RV spread on decline
+    if (optionsAnalysis.ivSpreadRatio > 1.3 && priceFalling) {
+      bearScore += 8;
+      bearReasons.push(`IV/RV spread elevated on decline (${optionsAnalysis.ivSpreadRatio.toFixed(1)}x) — downside priced in`);
+    }
+    // Vanna — negative vanna + rising IV = bearish (dealers must sell to hedge)
+    if (optionsAnalysis.normalizedVanna < -0.15 && optionsAnalysis.avgATMIV > 0) {
+      bearScore += 10;
+      bearReasons.push(`Negative vanna exposure (${optionsAnalysis.normalizedVanna.toFixed(2)}) — IV spike would force dealer selling`);
     }
   }
 
-  // --- Multi-Timeframe Confirmation ---
+  // --- Multi-Timeframe Confirmation (~15 max) ---
   if (mtf.htfAvailable && mtf.aligned && mtf.htfDirection === 'BEARISH') {
     bearScore += 15;
     bearReasons.push('Higher timeframe confirms bearish (trend + pressure aligned)');
   }
 
-  // --- NEW: GEX Integration ---
+  // --- GEX / Gamma Structure (~40 max) ---
   if (gexData) {
-    // Negative GEX on declining price = amplified selling
     if (gexData.normalizedGEX < -0.3 && priceFalling) {
       bearScore += 15;
       bearReasons.push(`Dealers short gamma (GEX: ${formatGEX(gexData.netGEX)}) — selling amplified`);
     }
-    // Price below zero-gamma level = negative gamma territory
     if (latest.c < gexData.zeroGammaLevel) {
-      bearScore += 8;
+      bearScore += 10;
       bearReasons.push(`Price below zero-gamma level ($${gexData.zeroGammaLevel.toFixed(0)}) — negative gamma territory`);
     }
-    // Strongly positive GEX with high gamma = price pinning (low conviction)
     if (gexData.normalizedGEX > 0.5 && latest.gammaConcentration > 0.75) {
       bearScore += 5;
       bearReasons.push('High positive GEX — price may be pinned near max gamma strike');
+    }
+  }
+
+  // --- Max Pain ---
+  if (maxPainData) {
+    const distToMaxPain = (latest.c - maxPainData.maxPainStrike) / latest.c;
+    // Price above max pain = gravitational pull downward (bearish into expiry)
+    if (distToMaxPain > 0.02) {
+      bearScore += 10;
+      bearReasons.push(`Price above max pain ($${maxPainData.maxPainStrike.toFixed(0)}) — downward pull into expiration`);
     }
   }
 
@@ -880,10 +1071,11 @@ export function generateSignal(gammaResults, optionsData, oiChangeMap = null, ht
       atrRatio: latest.atrRatio,
       price: currentPrice,
     },
-    // Expose new analysis for UI display
+    // Expose analysis for UI display
     optionsAnalysis,
     multiTimeframe: mtf,
     gexData,
+    maxPainData,
   };
 }
 

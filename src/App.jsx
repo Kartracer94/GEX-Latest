@@ -530,13 +530,13 @@ export default function App() {
                   <div className="section-subtitle">OPTIONS FLOW</div>
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
+                    gridTemplateColumns: '1fr 1fr 1fr',
                     gap: '8px',
                     fontSize: '11px',
                     fontFamily: 'var(--font-mono)',
                   }}>
                     <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
-                      <div style={{ color: '#556', marginBottom: '4px' }}>P/C Ratio</div>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>P/C OI Ratio</div>
                       <div style={{
                         color: signal.optionsAnalysis.pcRatio < 0.7 ? '#00ff88'
                           : signal.optionsAnalysis.pcRatio > 1.2 ? '#ff4466' : '#aab',
@@ -546,17 +546,99 @@ export default function App() {
                       </div>
                     </div>
                     <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
-                      <div style={{ color: '#556', marginBottom: '4px' }}>IV Spread</div>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>P/C Vol Ratio</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.pcVolumeRatio < 0.6 ? '#00ff88'
+                          : signal.optionsAnalysis.pcVolumeRatio > 1.5 ? '#ff4466' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.pcVolumeRatio.toFixed(2)}
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>IV/RV Spread</div>
                       <div style={{
                         color: signal.optionsAnalysis.ivSpreadRatio > 1.3 ? '#ffaa00' : '#aab',
                         fontWeight: 600,
                       }}>
-                        {signal.optionsAnalysis.ivSpreadRatio.toFixed(2)}×
+                        {signal.optionsAnalysis.ivSpreadRatio.toFixed(2)}x
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>IV Skew</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.ivSkewRatio > 1.15 ? '#ff4466'
+                          : signal.optionsAnalysis.ivSkewRatio < 1.05 && signal.optionsAnalysis.ivSkewRatio > 0
+                            ? '#00ff88' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.ivSkewRatio > 0
+                          ? `${signal.optionsAnalysis.ivSkewRatio.toFixed(2)}x`
+                          : 'N/A'}
+                      </div>
+                      <div style={{ color: '#444', fontSize: '9px', marginTop: '2px' }}>
+                        {signal.optionsAnalysis.ivSkewRatio > 1.15 ? 'put demand high'
+                          : signal.optionsAnalysis.ivSkewRatio < 1.05 && signal.optionsAnalysis.ivSkewRatio > 0
+                            ? 'skew flat/inverted' : 'normal'}
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>Vanna</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.normalizedVanna > 0.15 ? '#00ff88'
+                          : signal.optionsAnalysis.normalizedVanna < -0.15 ? '#ff4466' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.normalizedVanna.toFixed(3)}
+                      </div>
+                      <div style={{ color: '#444', fontSize: '9px', marginTop: '2px' }}>
+                        {signal.optionsAnalysis.normalizedVanna > 0.15 ? 'IV drop = buy pressure'
+                          : signal.optionsAnalysis.normalizedVanna < -0.15 ? 'IV spike = sell pressure'
+                            : 'neutral'}
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>Vol/OI (NTM)</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.nearMoneyVolOI > 0.5 ? '#ffaa00' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.nearMoneyVolOI.toFixed(2)}
+                      </div>
+                      <div style={{ color: '#444', fontSize: '9px', marginTop: '2px' }}>
+                        {signal.optionsAnalysis.nearMoneyVolOI > 0.5 ? 'new positions' : 'stale OI'}
                       </div>
                     </div>
                   </div>
 
-                  {/* NEW: GEX Panel */}
+                  {/* Max Pain + GEX Panel */}
+                  {signal.maxPainData && (
+                    <div style={{
+                      marginTop: '8px',
+                      padding: '8px',
+                      background: 'rgba(255,255,255,0.02)',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontFamily: 'var(--font-mono)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}>
+                      <div>
+                        <span style={{ color: '#556' }}>MAX PAIN </span>
+                        <span style={{ color: '#ffaa00', fontWeight: 700, fontSize: '14px' }}>
+                          ${signal.maxPainData.maxPainStrike.toFixed(signal.maxPainData.maxPainStrike >= 10 ? 0 : 2)}
+                        </span>
+                      </div>
+                      <div style={{ color: '#666', fontSize: '10px' }}>
+                        {signal.metrics?.price > signal.maxPainData.maxPainStrike
+                          ? `Price $${(signal.metrics.price - signal.maxPainData.maxPainStrike).toFixed(2)} above`
+                          : `Price $${(signal.maxPainData.maxPainStrike - signal.metrics.price).toFixed(2)} below`}
+                        {' '}— {Math.abs(((signal.metrics.price - signal.maxPainData.maxPainStrike) / signal.metrics.price) * 100).toFixed(1)}% gap
+                      </div>
+                    </div>
+                  )}
+
                   <GEXPanel gexData={gexData} />
                 </div>
               )}
