@@ -756,6 +756,54 @@ export default function App() {
                 <div className="strikes-empty">No strike recommendations available. Waiting for data...</div>
               )}
             </div>
+
+            {/* Metric Definitions */}
+            {signal.optionsAnalysis && (
+              <div className="signal-card" style={{ gridColumn: '1 / -1' }}>
+                <div className="section-title">OPTIONS FLOW GLOSSARY</div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '12px 24px',
+                  fontSize: '11px',
+                  lineHeight: '1.5',
+                  color: '#889',
+                }}>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>P/C OI Ratio</div>
+                    Total put open interest divided by total call open interest. Below 0.7 indicates heavy call positioning (bullish). Above 1.2 indicates heavy put positioning (bearish).
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>P/C Volume Ratio</div>
+                    Today's put volume divided by call volume. A leading indicator — today's volume becomes tomorrow's open interest. Below 0.6 signals aggressive call buying; above 1.5 signals aggressive put buying.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>IV/RV Spread</div>
+                    Implied volatility divided by realized (historical) volatility. Above 1.3x means the options market is pricing in a larger move than the stock has recently made — often a precursor to a breakout or event.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>IV Skew</div>
+                    Ratio of out-of-the-money put IV to out-of-the-money call IV. Above 1.15x means puts are significantly more expensive — institutions are buying downside protection (bearish). Below 1.05x means the skew is flat or inverted — low fear, often bullish.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Vanna</div>
+                    Measures how much dealers must buy or sell stock when implied volatility changes. Positive vanna means an IV drop forces dealers to buy shares (bullish). Negative vanna means an IV spike forces dealers to sell shares (bearish).
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Vol/OI (NTM)</div>
+                    Today's volume divided by open interest for near-the-money contracts. Above 0.5 means new positions are being actively opened today. Below 0.5 means most open interest is stale — carried over from previous sessions.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Max Pain</div>
+                    The strike price where the most options expire worthless — maximizing losses for option buyers. Price tends to gravitate toward max pain into expiration, especially when dealers hold positive gamma and can pin the stock.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>GEX (Gamma Exposure)</div>
+                    Net gamma exposure across all contracts. Positive GEX means dealers are long gamma — they buy dips and sell rips, stabilizing price. Negative GEX means dealers are short gamma — they must chase the move in both directions, amplifying volatility.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
