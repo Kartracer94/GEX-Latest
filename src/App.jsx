@@ -58,58 +58,6 @@ function TradingViewChart({ symbol, interval }) {
   return <div ref={containerRef} style={{ height: '100%', width: '100%' }} />;
 }
 
-// ── Gauge Components ──
-function GammaGauge({ value, label, min = 0, max = 1, colorScheme = 'default' }) {
-  const pct = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  const angle = -90 + pct * 180;
-
-  let color;
-  if (colorScheme === 'gex') {
-    // Red (negative/short gamma) → Yellow (neutral) → Green (positive/long gamma)
-    color = pct < 0.4 ? '#ff4466' : pct < 0.6 ? '#ffaa00' : '#00ff88';
-  } else if (colorScheme === 'pressure') {
-    color = pct < 0.35 ? '#ff4466' : pct > 0.65 ? '#00ff88' : '#ffaa00';
-  } else {
-    color = pct < 0.3 ? '#00ff88' : pct < 0.7 ? '#ffaa00' : '#ff4466';
-  }
-
-  const id = `gauge-${label.replace(/\s/g, '')}`;
-
-  return (
-    <div className="gauge">
-      <svg width={100} height={60} style={{ display: 'block' }}>
-        <defs>
-          <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <polygon points={`0,${60} ${50} ${60},${100},${60}`} fill={`url(#${id})`} />
-        <polyline points={50} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-      </svg>
-      <div className="gauge-label">{label}</div>
-      <div className="gauge-value" style={{ color }}>
-        {typeof value === 'number' ? value.toFixed(2) : value}
-      </div>
-    </div>
-  );
-}
-
-function SparkLine({ data, width = 600, height = 28, color = '#00aaff' }) {
-  if (!data || data.length < 2) return null;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`)
-    .join(' ');
-  return (
-    <svg width={width} height={height} style={{ display: 'block', opacity: 0.6 }}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 // ── GEX Weekly Panel Component ──
 function GEXPanel({ gexData }) {
   if (!gexData) return null;
@@ -391,11 +339,6 @@ export default function App() {
     setTicker(tickerInput.toUpperCase().trim());
   };
 
-  const latest = gammaResults?.[gammaResults.length - 1];
-  const pressureHistory = gammaResults
-    ? gammaResults.slice(-60).map((r) => r.combinedPressure)
-    : [];
-
   return (
     <div className="app">
       <header>
@@ -455,43 +398,7 @@ export default function App() {
       <div className="indicator-panel">
         {error && <div className="error-bar">⚠ {error}</div>}
 
-        {/* Gauges — UPDATED: replaced IV Percentile and Vol Ratio with GEX metrics */}
-        {latest && (
-          <div className="gauge-row">
-            <div className="gauge-cell">
-              <GammaGauge value={latest.gammaConcentration} label="Gamma Proxy" />
-            </div>
-            <div className="gauge-cell">
-              <GammaGauge
-                value={gexData ? gexData.normalizedGEX : 0}
-                label="Net GEX"
-                min={-1}
-                max={1}
-                colorScheme="gex"
-              />
-            </div>
-            <div className="gauge-cell">
-              <GammaGauge
-                value={latest.combinedPressure}
-                label="Bid/Ask Pressure"
-                min={-1}
-                max={1}
-                colorScheme="pressure"
-              />
-            </div>
-            <div className="gauge-cell">
-              <GammaGauge
-                value={gexData ? (latest.c - gexData.zeroGammaLevel) / latest.c : 0}
-                label="γ Flip Dist"
-                min={-0.05}
-                max={0.05}
-                colorScheme="gex"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Signal + Strikes */}
+        {/* Stacked layout: Signal → Options Flow → GEX → Strikes → Glossary */}
         {signal && (
           <div className="signal-grid">
             {/* Signal Card */}
@@ -530,13 +437,13 @@ export default function App() {
                   <div className="section-subtitle">OPTIONS FLOW</div>
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
+                    gridTemplateColumns: '1fr 1fr 1fr',
                     gap: '8px',
                     fontSize: '11px',
                     fontFamily: 'var(--font-mono)',
                   }}>
                     <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
-                      <div style={{ color: '#556', marginBottom: '4px' }}>P/C Ratio</div>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>P/C OI Ratio</div>
                       <div style={{
                         color: signal.optionsAnalysis.pcRatio < 0.7 ? '#00ff88'
                           : signal.optionsAnalysis.pcRatio > 1.2 ? '#ff4466' : '#aab',
@@ -546,18 +453,99 @@ export default function App() {
                       </div>
                     </div>
                     <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
-                      <div style={{ color: '#556', marginBottom: '4px' }}>IV Spread</div>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>P/C Vol Ratio</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.pcVolumeRatio < 0.6 ? '#00ff88'
+                          : signal.optionsAnalysis.pcVolumeRatio > 1.5 ? '#ff4466' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.pcVolumeRatio.toFixed(2)}
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>IV/RV Spread</div>
                       <div style={{
                         color: signal.optionsAnalysis.ivSpreadRatio > 1.3 ? '#ffaa00' : '#aab',
                         fontWeight: 600,
                       }}>
-                        {signal.optionsAnalysis.ivSpreadRatio.toFixed(2)}×
+                        {signal.optionsAnalysis.ivSpreadRatio.toFixed(2)}x
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>IV Skew</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.ivSkewRatio > 1.15 ? '#ff4466'
+                          : signal.optionsAnalysis.ivSkewRatio < 1.05 && signal.optionsAnalysis.ivSkewRatio > 0
+                            ? '#00ff88' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.ivSkewRatio > 0
+                          ? `${signal.optionsAnalysis.ivSkewRatio.toFixed(2)}x`
+                          : 'N/A'}
+                      </div>
+                      <div style={{ color: '#444', fontSize: '9px', marginTop: '2px' }}>
+                        {signal.optionsAnalysis.ivSkewRatio > 1.15 ? 'put demand high'
+                          : signal.optionsAnalysis.ivSkewRatio < 1.05 && signal.optionsAnalysis.ivSkewRatio > 0
+                            ? 'skew flat/inverted' : 'normal'}
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>Vanna</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.normalizedVanna > 0.15 ? '#00ff88'
+                          : signal.optionsAnalysis.normalizedVanna < -0.15 ? '#ff4466' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.normalizedVanna.toFixed(3)}
+                      </div>
+                      <div style={{ color: '#444', fontSize: '9px', marginTop: '2px' }}>
+                        {signal.optionsAnalysis.normalizedVanna > 0.15 ? 'IV drop = buy pressure'
+                          : signal.optionsAnalysis.normalizedVanna < -0.15 ? 'IV spike = sell pressure'
+                            : 'neutral'}
+                      </div>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                      <div style={{ color: '#556', marginBottom: '4px' }}>Vol/OI (NTM)</div>
+                      <div style={{
+                        color: signal.optionsAnalysis.nearMoneyVolOI > 0.5 ? '#ffaa00' : '#aab',
+                        fontWeight: 600,
+                      }}>
+                        {signal.optionsAnalysis.nearMoneyVolOI.toFixed(2)}
+                      </div>
+                      <div style={{ color: '#444', fontSize: '9px', marginTop: '2px' }}>
+                        {signal.optionsAnalysis.nearMoneyVolOI > 0.5 ? 'new positions' : 'stale OI'}
                       </div>
                     </div>
                   </div>
 
-                  {/* NEW: GEX Panel */}
-                  <GEXPanel gexData={gexData} />
+                  {/* Max Pain + GEX Panel */}
+                  {signal.maxPainData && (
+                    <div style={{
+                      marginTop: '8px',
+                      padding: '8px',
+                      background: 'rgba(255,255,255,0.02)',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontFamily: 'var(--font-mono)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}>
+                      <div>
+                        <span style={{ color: '#556' }}>MAX PAIN </span>
+                        <span style={{ color: '#ffaa00', fontWeight: 700, fontSize: '14px' }}>
+                          ${signal.maxPainData.maxPainStrike.toFixed(signal.maxPainData.maxPainStrike >= 10 ? 0 : 2)}
+                        </span>
+                      </div>
+                      <div style={{ color: '#666', fontSize: '10px' }}>
+                        {signal.metrics?.price > signal.maxPainData.maxPainStrike
+                          ? `Price $${(signal.metrics.price - signal.maxPainData.maxPainStrike).toFixed(2)} above`
+                          : `Price $${(signal.maxPainData.maxPainStrike - signal.metrics.price).toFixed(2)} below`}
+                        {' '}— {Math.abs(((signal.metrics.price - signal.maxPainData.maxPainStrike) / signal.metrics.price) * 100).toFixed(1)}% gap
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
 
@@ -575,6 +563,13 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* GEX Panel — standalone card */}
+            {gexData && (
+              <div className="signal-card">
+                <GEXPanel gexData={gexData} />
+              </div>
+            )}
 
             {/* Strikes Card */}
             <div className="signal-card">
@@ -674,28 +669,61 @@ export default function App() {
                 <div className="strikes-empty">No strike recommendations available. Waiting for data...</div>
               )}
             </div>
+
+            {/* Metric Definitions */}
+            {signal.optionsAnalysis && (
+              <div className="signal-card" style={{ gridColumn: '1 / -1' }}>
+                <div className="section-title">OPTIONS FLOW GLOSSARY</div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '12px 24px',
+                  fontSize: '11px',
+                  lineHeight: '1.5',
+                  color: '#889',
+                }}>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>P/C OI Ratio</div>
+                    Total put open interest divided by total call open interest. Below 0.7 indicates heavy call positioning (bullish). Above 1.2 indicates heavy put positioning (bearish).
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>P/C Volume Ratio</div>
+                    Today's put volume divided by call volume. A leading indicator — today's volume becomes tomorrow's open interest. Below 0.6 signals aggressive call buying; above 1.5 signals aggressive put buying.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>IV/RV Spread</div>
+                    Implied volatility divided by realized (historical) volatility. Above 1.3x means the options market is pricing in a larger move than the stock has recently made — often a precursor to a breakout or event.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>IV Skew</div>
+                    Ratio of out-of-the-money put IV to out-of-the-money call IV. Above 1.15x means puts are significantly more expensive — institutions are buying downside protection (bearish). Below 1.05x means the skew is flat or inverted — low fear, often bullish.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Vanna</div>
+                    Measures how much dealers must buy or sell stock when implied volatility changes. Positive vanna means an IV drop forces dealers to buy shares (bullish). Negative vanna means an IV spike forces dealers to sell shares (bearish).
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Vol/OI (NTM)</div>
+                    Today's volume divided by open interest for near-the-money contracts. Above 0.5 means new positions are being actively opened today. Below 0.5 means most open interest is stale — carried over from previous sessions.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Max Pain</div>
+                    The strike price where the most options expire worthless — maximizing losses for option buyers. Price tends to gravitate toward max pain into expiration, especially when dealers hold positive gamma and can pin the stock.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>GEX (Gamma Exposure)</div>
+                    Net gamma exposure across all contracts. Positive GEX means dealers are long gamma — they buy dips and sell rips, stabilizing price. Negative GEX means dealers are short gamma — they must chase the move in both directions, amplifying volatility.
+                  </div>
+                  <div>
+                    <div style={{ color: '#aab', fontWeight: 600, marginBottom: '2px' }}>Gamma</div>
+                    The rate of change of an option's delta per $1 move in the underlying stock. High gamma at a strike means small price moves cause large shifts in dealer hedging — creating a "magnet" effect that pulls price toward that strike or, if dealers are short gamma, accelerates moves away from it.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Pressure Sparkline Footer */}
-        {pressureHistory.length > 0 && (
-          <div className="pressure-footer">
-            <div className="pressure-label">BID/ASK PRESSURE</div>
-            <SparkLine data={pressureHistory} width={600} height={28} color="#00aaff" />
-            <div
-              className="pressure-value"
-              style={{
-                color: latest.combinedPressure > 0.1
-                  ? '#00ff88'
-                  : latest.combinedPressure < -0.1
-                  ? '#ff4466'
-                  : '#aab',
-              }}
-            >
-              {latest.combinedPressure.toFixed(3)}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

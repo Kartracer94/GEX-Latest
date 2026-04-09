@@ -39,15 +39,11 @@ export async function fetchOptionsChain(ticker, limit = 250) {
 const OI_STORAGE_KEY = 'gamma_oi_cache';
 
 function getTradingDate() {
+  // Get current date in US Eastern time (handles DST automatically)
   const now = new Date();
-  // Use ET market date (approximate: if before 4pm ET, use previous day)
-  const etHour = now.getUTCHours() - 5; // rough ET offset
-  let d = new Date(now);
-  if (etHour < 16) {
-    // Before market close — "today's session" hasn't settled yet
-    // Current OI in snapshot = yesterday's settled OI
-  }
-  return d.toISOString().split('T')[0];
+  const etString = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const et = new Date(etString);
+  return et.toISOString().split('T')[0];
 }
 
 function getPrevTradingDate(dateStr) {
@@ -77,29 +73,46 @@ export function computeOiChangeMap(ticker, currentOptions) {
     }
   }
 
-  // Load previous cache
+  // Load previous cache and persist both current + previous day snapshots
   let prevOiMap = {};
   try {
     const cached = localStorage.getItem(cacheKey);
     if (cached) {
       const parsed = JSON.parse(cached);
-      // Only use if from a previous date
       if (parsed.date && parsed.date !== today) {
+        // New trading day — rotate: today's cached snapshot becomes "prev"
         prevOiMap = parsed.oiMap || {};
+        localStorage.setItem(cacheKey, JSON.stringify({
+          date: today,
+          oiMap: todayOiMap,
+          prevDate: parsed.date,
+          prevOiMap: prevOiMap,
+        }));
+      } else if (parsed.date === today && parsed.prevOiMap) {
+        // Same day refresh — reuse the stored previous-day snapshot
+        prevOiMap = parsed.prevOiMap;
+        localStorage.setItem(cacheKey, JSON.stringify({
+          date: today,
+          oiMap: todayOiMap,
+          prevDate: parsed.prevDate,
+          prevOiMap: parsed.prevOiMap,
+        }));
+      } else {
+        // Same day, no previous data (first-ever session)
+        localStorage.setItem(cacheKey, JSON.stringify({
+          date: today,
+          oiMap: todayOiMap,
+        }));
       }
+    } else {
+      // No cache at all — first session
+      localStorage.setItem(cacheKey, JSON.stringify({
+        date: today,
+        oiMap: todayOiMap,
+      }));
     }
   } catch (e) {
     // localStorage unavailable — no OI change
-  }
-
-  // Save today's OI for tomorrow's comparison
-  try {
-    localStorage.setItem(cacheKey, JSON.stringify({
-      date: today,
-      oiMap: todayOiMap,
-    }));
-  } catch (e) {
-    // localStorage unavailable
   }
 
   // Compute change map: { "O:AAPL...": +150, "O:AAPL...": -30 }
